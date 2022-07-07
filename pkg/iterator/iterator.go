@@ -1,9 +1,14 @@
 package iterator
 
-import "errors"
+import (
+	"errors"
+)
 
 type Iterator[T any] interface {
-	Next() (T, IterError)
+	Next() (T, *IterError)
+	/* Close releases any resources that may be in use by the iterator.
+	May be a No-Op. */
+	Close()
 }
 
 /* Wrapper around error to provide utility methods which add logic
@@ -19,6 +24,6 @@ func (err *IterError) IsDone() bool {
 
 var errDoneIteration = errors.New("no more items in iterator")
 
-func DoneIterationErr() IterError {
-	return IterError{errDoneIteration}
+func DoneIterationErr() *IterError {
+	return &IterError{errDoneIteration}
 }

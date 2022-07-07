@@ -45,7 +45,7 @@ func (it *sliceIterator[E]) Next() (elem E, err *IterError) {
 }
 
 func MapIterator[K comparable, V any](source map[K]V) *mapIterator[K, V] {
-	it := mapIterator[K, V]{Source: source, items: make(chan KeyValuePair[K, V])}
+	it := mapIterator[K, V]{Source: source, items: make(chan KeyValuePair[K, V]), closer: make(chan struct{})}
 	go func() {
 		defer close(it.items)
 		for k, v := range it.Source {
@@ -88,22 +88,28 @@ func Flatten[E any](source Iterator[Iterator[E]]) *chainIterator[E] {
 
 func (c *chainIterator[E]) Next() (elem E, err *IterError) {
 	var sourceItErr, nestItErr *IterError
-	for sourceItErr == nil && (c.current == nil || nestItErr != nil && nestItErr.IsDone()) {
+
+	for {
 		c.current, sourceItErr = c.sourceIt.Next()
-		if c.current != nil && sourceItErr == nil {
-			elem, nestItErr = c.current.Next()
-		} else if sourceItErr != nil {
+		if sourceItErr != nil {
 			if sourceItErr.IsDone() {
 				err = sourceItErr
+				break
 			} else {
 				/* It is expected that sourceIt is a reliable, non error-returning iterator. If it does
 				return an error that isn't simply an indication of being done, then something is wrong. */
 				panic("iterator: chain iterator sourceIt.Next() errored before completion: " + err.Error())
 			}
 		}
-	}
-	if nestItErr != nil && !nestItErr.IsDone() {
-		err = &IterError{fmt.Errorf(`chainIterator: one of chained iterators returned error: %w`, nestItErr)}
+		elem, nestItErr = c.current.Next()
+		if nestItErr != nil {
+			if nestItErr.IsDone() {
+				continue
+			} else {
+				err = &IterError{fmt.Errorf(`chainIterator: one of chained iterators returned error: %w`, nestItErr)}
+			}
+		}
+		break
 	}
 	return
 }

@@ -18,7 +18,7 @@ type IterError struct {
 	error
 }
 
-func (err *IterError) IsDone() bool {
+func (err IterError) IsDone() bool {
 	return errors.Is(err.error, errDoneIteration)
 }
 

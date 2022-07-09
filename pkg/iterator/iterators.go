@@ -90,7 +90,9 @@ func (c *chainIterator[E]) Next() (elem E, err *IterError) {
 	var sourceItErr, nestItErr *IterError
 
 	for {
-		c.current, sourceItErr = c.sourceIt.Next()
+		if c.current == nil {
+			c.current, sourceItErr = c.sourceIt.Next()
+		}
 		if sourceItErr != nil {
 			if sourceItErr.IsDone() {
 				err = sourceItErr
@@ -104,6 +106,8 @@ func (c *chainIterator[E]) Next() (elem E, err *IterError) {
 		elem, nestItErr = c.current.Next()
 		if nestItErr != nil {
 			if nestItErr.IsDone() {
+				c.current.Close()
+				c.current = nil
 				continue
 			} else {
 				err = &IterError{fmt.Errorf(`chainIterator: one of chained iterators returned error: %w`, nestItErr)}
@@ -123,10 +127,10 @@ func (c *chainIterator[E]) Close() {
 		/* In the case that err != nil && !err.IsDone(), we still need to try to continue through all the
 		iterators and close them. */
 		switch {
-		case err.IsDone():
-			return
 		case err == nil:
 			elem.Close()
+		case err.IsDone():
+			return
 		}
 	}
 }

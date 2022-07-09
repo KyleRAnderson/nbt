@@ -1,6 +1,7 @@
 package iterator
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -269,6 +270,85 @@ func TestChainIterator(t *testing.T) {
 						break
 					}
 				}
+			})
+		}
+	})
+}
+
+func ensureDoneAndClosed[E any](t *testing.T, closed *bool, mappedIt Iterator[E]) {
+	_, err := mappedIt.Next()
+	if err == nil || !err.IsDone() {
+		t.Errorf("expected to be done after advancing iterator, got: %v", err)
+	}
+	mappedIt.Close()
+	if !*closed {
+		t.Error("closing mapped iterator did not close source iterator")
+	}
+}
+func TestMap(t *testing.T) {
+	t.Run(`with a map of incremented integers`, func(t *testing.T) {
+		r := rand.New(rand.NewSource(80))
+		mapper := func(value int) int { return value + 1 }
+		for testNo, test := range [][]int{
+			{},
+			{1, 2, 3},
+			{9, 8, -3, 4, 5, -104, 9},
+			generateRandomIntSlice(r, 42),
+			generateRandomIntSlice(r, 1090),
+		} {
+			test := test // Capture
+			t.Run(fmt.Sprint("case ", testNo), func(t *testing.T) {
+				closed := false
+				sourceIt := addCustomClose[int](SliceIterator(test), func(it Iterator[int]) { closed = true; it.Close() })
+				mappedIt := Map(sourceIt, func(value int) (int, error) { return mapper(value), nil })
+			loop:
+				for i, sourceValue := range test {
+					receivedValue, err := mappedIt.Next()
+					switch {
+					case err == nil:
+						if expectedValue := mapper(sourceValue); receivedValue != expectedValue {
+							t.Errorf("mismatch at element %d, expected: %v, received: %v", i, expectedValue, receivedValue)
+						}
+					case err.IsDone():
+						t.Errorf("iterator unexpectedly completed at element %d, should still have %v remaining", i, test[i:])
+						break loop
+					default:
+						t.Errorf("received unexpected error while iterating: %v", err)
+					}
+				}
+				ensureDoneAndClosed[int](t, &closed, mappedIt)
+			})
+		}
+	})
+
+	t.Run(`with errors in the map function, errors are returned properly`, func(t *testing.T) {
+		type pair[A, B any] struct {
+			a A
+			b B
+		}
+		for testNo, test := range [][]pair[int, error]{
+			{pair[int, error]{3, nil}, pair[int, error]{4, errors.New("some")}},
+			{pair[int, error]{90, errors.New("yikes")}, pair[int, error]{209, errors.New("some")}, pair[int, error]{0x394, errors.New("dsffg")}},
+		} {
+			test := test // Capture
+			t.Run(fmt.Sprint("case ", testNo), func(t *testing.T) {
+				t.Parallel()
+				closed := false
+				sourceIt := addCustomClose[pair[int, error]](SliceIterator(test), func(it Iterator[pair[int, error]]) { closed = true; it.Close() })
+				mappedIt := Map(sourceIt, func(p pair[int, error]) (int, error) { return p.a, p.b })
+				for i, expectedP := range test {
+					receivedP := pair[int, error]{}
+					receivedP.a, receivedP.b = mappedIt.Next()
+					if expectedP.b != nil {
+						/* If expecting an error, then the iterator's return value is undefined, so we should not check this. */
+						if !errors.Is(receivedP.b, expectedP.b) {
+							t.Errorf("unexpected error value at index %d, expected: %v, received: %v", i, expectedP.b, receivedP.b)
+						}
+					} else if expectedP.a != receivedP.a {
+						t.Errorf("unexpected value at index %d, expected: %v, received: %v", i, expectedP.a, receivedP.a)
+					}
+				}
+				ensureDoneAndClosed[int](t, &closed, mappedIt)
 			})
 		}
 	})

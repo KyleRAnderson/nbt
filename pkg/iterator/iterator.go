@@ -7,7 +7,9 @@ import (
 type Iterator[T any] interface {
 	Next() (T, *IterError)
 	/* Close releases any resources that may be in use by the iterator.
-	May be a No-Op. */
+	This may do nothing.
+	Mutating an iterator (such as by advancing it) after its Close method has been called
+	results in undefined behaviour. */
 	Close()
 }
 
@@ -20,6 +22,10 @@ type IterError struct {
 
 func (err IterError) IsDone() bool {
 	return errors.Is(err.error, errDoneIteration)
+}
+
+func (err IterError) Unwrap() error {
+	return err.error
 }
 
 var errDoneIteration = errors.New("no more items in iterator")

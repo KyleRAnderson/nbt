@@ -215,10 +215,11 @@ func TestChainIterator(t *testing.T) {
 						}
 						it := Chain(allIt...)
 						test.test(t, it)
-						if all, err := AllBool(SliceIterator(closed)); err != nil {
-							t.Errorf("failure determining if all iterators were closed: %v", err)
-						} else if !all {
-							t.Errorf("not all iterators were closed: %#v", closed)
+						for _, isClosed := range closed {
+							if !isClosed {
+								t.Errorf("not all iterators were closed: %#v", closed)
+								break
+							}
 						}
 					})
 				}
@@ -226,47 +227,49 @@ func TestChainIterator(t *testing.T) {
 		}
 	})
 
-	r := rand.New(rand.NewSource(9218))
-	for testNo, test := range [][]int{
-		{1},
-		{1, 2},
-		{7, -3, 490, 8801, 3701, 0x89},
-		generateRandomIntSlice(r, 8),
-		generateRandomIntSlice(r, 42),
-		generateRandomIntSlice(r, 128),
-		generateRandomIntSlice(r, 1049),
-	} {
-		t.Run(fmt.Sprint("testNo ", testNo), func(t *testing.T) {
-			/* Log2 is chosen here just to use a slow growing function. */
-			maxNumSplits := int(math.Log2(float64(len(test))))
-			spliced := randomSplice(r, test, (maxNumSplits))
-			t.Logf("spliced test case: %v", spliced)
-			iterators := make([]Iterator[int], len(spliced))
-			closed := make([]bool, len(spliced))
-			for i := range spliced {
-				i := i // Capture
-				iterators[i] = addCustomClose[int](SliceIterator(spliced[i]), func(it Iterator[int]) { closed[i] = true; it.Close() })
-			}
-			chainIt := Chain(iterators...)
-			defer chainIt.Close()
-			for i, expectedElem := range test {
-				receivedElem, err := chainIt.Next()
-				if err != nil {
-					t.Errorf(`expected no error at element %d but received %v`, i, err)
-				} else if expectedElem != receivedElem {
-					t.Errorf(`element mismatch at index %d, expected: %v, received: %v`, i, expectedElem, receivedElem)
+	t.Run("with nonempty iterators", func(t *testing.T) {
+		r := rand.New(rand.NewSource(9218))
+		for testNo, test := range [][]int{
+			{1},
+			{1, 2},
+			{7, -3, 490, 8801, 3701, 0x89},
+			generateRandomIntSlice(r, 8),
+			generateRandomIntSlice(r, 42),
+			generateRandomIntSlice(r, 128),
+			generateRandomIntSlice(r, 1049),
+		} {
+			t.Run(fmt.Sprint("testNo ", testNo), func(t *testing.T) {
+				/* Log2 is chosen here just to use a slow growing function. */
+				maxNumSplits := int(math.Log2(float64(len(test))))
+				spliced := randomSplice(r, test, (maxNumSplits))
+				t.Logf("spliced test case: %v", spliced)
+				iterators := make([]Iterator[int], len(spliced))
+				closed := make([]bool, len(spliced))
+				for i := range spliced {
+					i := i // Capture
+					iterators[i] = addCustomClose[int](SliceIterator(spliced[i]), func(it Iterator[int]) { closed[i] = true; it.Close() })
 				}
-			}
-			unexpectedElem, err := chainIt.Next()
-			if err == nil || !err.IsDone() {
-				t.Error(`expected chain iterator to be exhausted, but was not, and received `, unexpectedElem)
-			}
-			for _, isClosed := range closed {
-				if !isClosed {
-					t.Errorf("not all iterators were closed: %#v", closed)
-					break
+				chainIt := Chain(iterators...)
+				defer chainIt.Close()
+				for i, expectedElem := range test {
+					receivedElem, err := chainIt.Next()
+					if err != nil {
+						t.Errorf(`expected no error at element %d but received %v`, i, err)
+					} else if expectedElem != receivedElem {
+						t.Errorf(`element mismatch at index %d, expected: %v, received: %v`, i, expectedElem, receivedElem)
+					}
 				}
-			}
-		})
-	}
+				unexpectedElem, err := chainIt.Next()
+				if err == nil || !err.IsDone() {
+					t.Error(`expected chain iterator to be exhausted, but was not, and received `, unexpectedElem)
+				}
+				for _, isClosed := range closed {
+					if !isClosed {
+						t.Errorf("not all iterators were closed: %#v", closed)
+						break
+					}
+				}
+			})
+		}
+	})
 }

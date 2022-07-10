@@ -11,11 +11,13 @@ type ImmutableSet[T any] interface {
 type Set[T any] interface {
 	Add(T)
 	Remove(T)
+	Size() uint
 	ImmutableSet[T]
 }
 
 /* Performs a set difference, placing the items of the resultant set in `out`. */
-func Difference[T any](out, s1, s2 Set[T]) {
+func Difference[T any](out, s1, s2 Set[T]) (out2 Set[T]) {
+	out2 = out
 	iter := s1.It()
 	defer iter.Close()
 loop:
@@ -33,9 +35,11 @@ loop:
 			out.Add(elem)
 		}
 	}
+	return
 }
 
-func Union[T any](out Set[T], sets ...Set[T]) {
+func Union[T any](out Set[T], sets ...Set[T]) (out2 Set[T]) {
+	out2 = out
 	for _, s := range sets {
 		func() {
 			iter := s.It()
@@ -55,6 +59,7 @@ func Union[T any](out Set[T], sets ...Set[T]) {
 			}
 		}()
 	}
+	return
 }
 
 func Intersect[T any](out Set[T], sets ...Set[T]) {

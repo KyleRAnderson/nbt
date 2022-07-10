@@ -2,6 +2,8 @@
 
 package set
 
+import "gitlab.com/kyle_anderson/go-utils/pkg/iterator"
+
 type ComparableSet[T comparable] map[T]struct{}
 
 func NewComparable[T comparable](elements ...T) ComparableSet[T] {
@@ -23,4 +25,10 @@ func (s ComparableSet[T]) Add(element T) {
 
 func (s ComparableSet[T]) Remove(element T) {
 	delete(s, element)
+}
+
+func (s ComparableSet[T]) It() iterator.Iterator[T] {
+	return iterator.Map[iterator.KeyValuePair[T, struct{}]](iterator.MapIterator(s), func(kvp iterator.KeyValuePair[T, struct{}]) (T, error) {
+		return kvp.Key, nil
+	})
 }

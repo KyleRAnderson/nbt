@@ -14,6 +14,10 @@ func NewComparable[T comparable](elements ...T) ComparableSet[T] {
 	return set
 }
 
+func AllocateComparable[T comparable](size uint) ComparableSet[T] {
+	return make(ComparableSet[T], size)
+}
+
 func (s ComparableSet[T]) Contains(element T) bool {
 	_, contained := s[element]
 	return contained
@@ -25,6 +29,10 @@ func (s ComparableSet[T]) Add(element T) {
 
 func (s ComparableSet[T]) Remove(element T) {
 	delete(s, element)
+}
+
+func (s ComparableSet[T]) Size() uint {
+	return uint(len(s))
 }
 
 func (s ComparableSet[T]) It() iterator.Iterator[T] {

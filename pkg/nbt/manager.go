@@ -63,8 +63,10 @@ func (tm *taskManager) processRequirement(dependent *taskEntry, dependencies []T
 		resolvedDependency := tm.resolve(dependency)
 		dependent.dependencies.Add(resolvedDependency)
 		resolvedDependency.dependents = append(resolvedDependency.dependents, dependent)
-		/* Tasks that have not yet executed will have empty dependencies, so should be ready. */
-		tm.processWaitingTask(resolvedDependency)
+		if resolvedDependency.IsReady() && resolvedDependency.status == statusNew {
+			/* Need to check that the task status is new to prevent adding multiple queue entries for the same task. */
+			tm.enqueue(resolvedDependency)
+		}
 	}
 }
 

@@ -2,7 +2,7 @@ package nbt
 
 type Task interface {
 	/* Returns a hash for this task that can be used to use it in a map. */
-	Hash() int
+	Hash() uintptr
 	/* Returns true if this task matches the given task, false otherwise. */
 	Matches(Task) bool
 	Perform(h Handler)

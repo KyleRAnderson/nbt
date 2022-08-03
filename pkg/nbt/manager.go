@@ -7,11 +7,11 @@ import (
 )
 
 func newTaskManager() *taskManager {
-	return &taskManager{make(map[int][]*taskEntry), 0, 0, queue.NewLinkedListQueue()}
+	return &taskManager{make(map[uintptr][]*taskEntry), 0, 0, queue.NewLinkedListQueue[*taskEntry]()}
 }
 
 type taskManager struct {
-	registry                 map[int][]*taskEntry
+	registry                 map[uintptr][]*taskEntry
 	numWaiting, numExecuting uint
 	taskQueue                queue.Queue[*taskEntry]
 }
@@ -185,7 +185,7 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 		}
 
 		for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
-			manager.run(manager.taskQueue.Dequeue())
+			manager.run(manager.taskQueue.Dequeue(), &comms)
 		}
 	}
 }

@@ -43,5 +43,5 @@ func (t *taskLinkProgram) Perform(h nbt.Handler) {
 func main() {
 	/* For the completed software, an automatic main task would be created
 	which would read os.Args and find the tasks listed there, then require them and wait. */
-	nbt.Start(&taskLinkProgram{}, 2)
+	nbt.Start(&taskLinkProgram{}, 1)
 }

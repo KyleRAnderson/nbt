@@ -61,7 +61,9 @@ func (tm *taskManager) enqueue(task *taskEntry) {
 func (tm *taskManager) processRequirement(dependent *taskEntry, dependencies []Task) {
 	for _, dependency := range dependencies {
 		resolvedDependency := tm.resolve(dependency)
-		dependent.dependencies.Add(resolvedDependency)
+		if resolvedDependency.status != statusComplete {
+			dependent.dependencies.Add(resolvedDependency)
+		}
 		resolvedDependency.dependents = append(resolvedDependency.dependents, dependent)
 		if resolvedDependency.IsReady() && resolvedDependency.status == statusNew {
 			/* Need to check that the task status is new to prevent adding multiple queue entries for the same task. */
@@ -175,6 +177,7 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 			manager.processCompleteTask(doneTask)
 		case waitingTask := <-comms.waitQueue:
 			manager.numWaiting++
+			manager.numExecuting--
 			manager.processWaitingTask(waitingTask)
 		case requirement := <-comms.dependencyQueue:
 			manager.processRequirement(requirement.dependent, requirement.dependencies)

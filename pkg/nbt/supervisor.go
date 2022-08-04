@@ -36,6 +36,20 @@ func superviseTask[T Task](task T, handler *chanHandler[T], comms supervisorComm
 			} else {
 				comms.SendMessage(task, message)
 			}
+			if newStatus := message.RequestedStatus(); newStatus != nil && shouldSupervisorExit(*newStatus) {
+				/* A new supervisor is created whenever a task is scheduled, including when it is resumed, so we can
+				safely exit here. */
+				return
+			}
 		}
+	}
+}
+
+func shouldSupervisorExit(status taskStatus) bool {
+	switch status {
+	case statusWaiting, statusComplete:
+		return true
+	default:
+		return false
 	}
 }

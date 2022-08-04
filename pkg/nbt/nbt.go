@@ -15,3 +15,7 @@ type Handler interface {
 	This operation is semi-expensive since the main goroutine must perform the resolution. */
 	Resolve(t Task) Task
 }
+
+func Start(mainTask Task, maxParallelTasks uint) {
+	newTaskManager().execute(mainTask, maxParallelTasks)
+}

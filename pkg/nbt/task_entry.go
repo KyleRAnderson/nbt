@@ -4,10 +4,6 @@ import (
 	"gitlab.com/kyle_anderson/go-utils/pkg/set"
 )
 
-func Start(mainTask Task, maxParallelTasks uint) {
-	newTaskManager().execute(mainTask, maxParallelTasks)
-}
-
 type taskEntry struct {
 	Task
 	/* Slice of tasks that are dependent and still waiting on this task. */

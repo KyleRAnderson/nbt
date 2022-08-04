@@ -1,5 +1,7 @@
 package nbt
 
+/* Handlers make requests on behalf of workers, and relay received information. */
+
 /* A handler that uses channels for all of its operations. */
 type chanHandler[T Task] struct {
 	messages     chan handlerMessenger

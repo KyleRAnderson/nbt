@@ -16,26 +16,6 @@ type taskManager struct {
 	taskQueue                queue.Queue[*taskEntry]
 }
 
-/* Interface to be implemented in order for the handler to be able to communicate
-properly with the manager. */
-type handlerCommunicator[T Task] interface {
-	SendMessage(T, handlerMessenger)
-	RequestResolution(resolveRequester)
-}
-
-type managerComms struct {
-	messages        chan messenger[*taskEntry]
-	resolutionQueue chan resolveRequester
-}
-
-func (c *managerComms) SendMessage(task *taskEntry, message handlerMessenger) {
-	c.messages <- addSubject(task, message)
-}
-
-func (c *managerComms) RequestResolution(r resolveRequester) {
-	c.resolutionQueue <- r
-}
-
 func (tm *taskManager) processCompleteTask(task *taskEntry) {
 	task.status = statusComplete
 	for _, dependent := range task.dependents {
@@ -105,7 +85,7 @@ func (err *errUnexpectedStatus) Error() string {
 }
 
 /* Runs the given task. */
-func (tm *taskManager) run(task *taskEntry, comms *managerComms) {
+func (tm *taskManager) run(task *taskEntry, comms *supervisorComms) {
 	switch task.status {
 	case statusNew:
 		task.handler = newChanHandler[*taskEntry]()
@@ -119,25 +99,8 @@ func (tm *taskManager) run(task *taskEntry, comms *managerComms) {
 		panic(&errUnexpectedStatus{task})
 	}
 	task.status = statusRunning
-	go monitorTask[*taskEntry](task, task.handler, comms)
+	go superviseTask[*taskEntry](task, task.handler, comms)
 	tm.numExecuting++
-}
-
-func monitorTask[T Task](task T, handler *chanHandler[T], comms handlerCommunicator[T]) {
-	/* Use a type parameter to prevent this function from using members of *taskEntry. */
-	for {
-		select {
-		case request := <-handler.resolveQueue:
-			comms.RequestResolution(request)
-		case message, isOpen := <-handler.messages:
-			if !isOpen {
-				comms.SendMessage(task, statusUpdate{newStatus: statusComplete})
-			} else {
-				comms.SendMessage(task, message)
-			}
-			return
-		}
-	}
 }
 
 func dependencyQueueSize(maxParallelTasks uint) uint {
@@ -149,7 +112,7 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 		panic("numJobs must be positive!")
 	}
 	/* No need to close these channels since it wouldn't signal anything anyway. */
-	comms := managerComms{
+	comms := supervisorComms{
 		messages:        make(chan messenger[*taskEntry], dependencyQueueSize(maxParallelTasks)),
 		resolutionQueue: make(chan resolveRequester, maxParallelTasks),
 	}
@@ -182,25 +145,5 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 		}
 	}
 
-	// for manager.numExecuting > 0 {
-	// 	select {
-	// 	case doneTask := <-comms.doneQueue:
-	// 		manager.numExecuting--
-	// 		manager.processCompleteTask(doneTask)
-	// 	case waitingTask := <-comms.waitQueue:
-	// 		manager.numWaiting++
-	// 		manager.numExecuting--
-	// 		manager.processWaitingTask(waitingTask)
-	// 	case requirement := <-comms.dependencyQueue:
-	// 		manager.processRequirement(requirement.dependent, requirement.dependencies)
-	// 	case request := <-comms.resolutionQueue:
-	// 		/* This will not block with the implementation of chanMessageCallbacks that we have, since
-	// 		only one item will ever get placed on the callback channel, and it is a buffered channel. */
-	// 		request.callback <- manager.resolve(request.toResolve)
-	// 	}
-
-	// 	for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
-	// 		manager.run(manager.taskQueue.Dequeue(), &comms)
-	// 	}
-	// }
+	// TODO handle deadlock, which should be indicated if manager.numExecuting <= 0 && manager.numWaiting > 0
 }

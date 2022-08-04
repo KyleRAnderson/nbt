@@ -2,6 +2,7 @@ package nbt
 
 import (
 	"fmt"
+	"log"
 
 	"gitlab.com/kyle_anderson/go-utils/pkg/queue"
 )
@@ -24,8 +25,34 @@ func (tm *taskManager) processCompleteTask(task *taskEntry) {
 	}
 }
 
+func (tm *taskManager) processErroredTask(task *taskEntry) {
+	task.status = statusErrored
+	for _, dependent := range task.dependents {
+		switch dependent.status {
+		case statusWaiting:
+			tm.numWaiting--
+			fallthrough
+		case statusNew:
+			dependent.status = statusErrored
+		case statusComplete, statusErrored:
+			// Do nothing
+		case statusRunning:
+			task.onWaiting(func(t *taskEntry) {
+				if t.status != statusWaiting {
+					panic(fmt.Sprint(`unexpected task status upon entering onWaiting: `, t.status))
+				}
+				tm.processErroredTask(t)
+			})
+		default:
+			/* Ideally handling all cases would be checked at compile time, but Go lacks this ability. */
+			panic(fmt.Sprint("(*taskManager).processErroredTask: unhandled state: ", dependent.status))
+		}
+	}
+}
+
 func (tm *taskManager) processWaitingTask(task *taskEntry) {
 	task.status = statusWaiting
+	task.fireCallbacks(&task.onWaitingHooks)
 	if task.IsReady() {
 		tm.enqueue(task)
 	}
@@ -76,22 +103,22 @@ func (tm *taskManager) resolve(task Task) (currentInstance *taskEntry) {
 	return
 }
 
-type errUnexpectedStatus struct {
-	task *taskEntry
-}
-
-func (err *errUnexpectedStatus) Error() string {
-	return fmt.Sprintf(`unexpected state %q for task`, err.task.status.String())
-}
-
 /* Runs the given task. */
 func (tm *taskManager) run(task *taskEntry, comms *supervisorComms) {
 	switch task.status {
 	case statusNew:
 		task.handler = newChanHandler[*taskEntry]()
 		go func() {
-			defer close(task.handler.messages)
-			task.Perform(task.handler)
+			// TODO might be nice for the supervisor to handle this business logic.
+			defer func() {
+				close(task.handler.messages)
+				if err := recover(); err != nil {
+					task.handler.messages <- &errorMessage{err: &errPanicked{panicErr: err, task: task}}
+				}
+			}()
+			if err := task.Perform(task.handler); err != nil {
+				task.handler.messages <- &errorMessage{err: err}
+			}
 		}()
 	case statusWaiting:
 		tm.numWaiting--
@@ -131,6 +158,9 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 					manager.numWaiting++
 					manager.numExecuting--
 					manager.processWaitingTask(message.Subject())
+				case statusErrored:
+					log.Printf("task %#v errored: %v\n", message.Subject(), message.Error())
+					manager.processErroredTask(message.Subject())
 				default:
 					// Do nothing
 				}

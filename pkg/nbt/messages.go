@@ -9,6 +9,9 @@ type handlerMessenger interface {
 	/* Status being requested by the task. Nil to indicate that no status update is being requested.
 	Request may be denied. */
 	RequestedStatus() *taskStatus
+	/* Any sort of error that has occurred. Having an error alone does not mark the task as
+	having failed, for that, the status must also be updated to statusErrored. */
+	Error() error
 }
 
 /* Interface for message types sent to the manager, which need the task which made the
@@ -37,6 +40,7 @@ type blankMessage struct{}
 
 func (blankMessage) Dependencies() []Task         { return nil }
 func (blankMessage) RequestedStatus() *taskStatus { return nil }
+func (blankMessage) Error() error                 { return nil }
 
 type statusUpdate struct {
 	newStatus taskStatus
@@ -55,6 +59,18 @@ type dependencyDeclaration struct {
 }
 
 func (r *dependencyDeclaration) Dependencies() []Task { return r.dependencies }
+
+type errorMessage struct {
+	err error
+	blankMessage
+}
+
+func (em *errorMessage) RequestedStatus() *taskStatus {
+	status := statusErrored
+	return &status
+}
+
+func (em *errorMessage) Error() error { return em.err }
 
 /* Message type used when resolution of a task is requested. */
 type resolveRequester interface {

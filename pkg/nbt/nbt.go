@@ -5,7 +5,7 @@ type Task interface {
 	Hash() uintptr
 	/* Returns true if this task matches the given task, false otherwise. */
 	Matches(Task) bool
-	Perform(h Handler)
+	Perform(h Handler) error
 }
 
 type Handler interface {

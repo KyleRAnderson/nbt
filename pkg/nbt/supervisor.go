@@ -47,7 +47,7 @@ func superviseTask[T Task](task T, handler *chanHandler[T], comms supervisorComm
 
 func shouldSupervisorExit(status taskStatus) bool {
 	switch status {
-	case statusWaiting, statusComplete:
+	case statusWaiting, statusComplete, statusErrored:
 		return true
 	default:
 		return false

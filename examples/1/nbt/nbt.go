@@ -19,9 +19,10 @@ func (t *taskCompileC) Matches(other nbt.Task) bool {
 	return false
 }
 
-func (t *taskCompileC) Perform(h nbt.Handler) {
+func (t *taskCompileC) Perform(h nbt.Handler) error {
 	stdout, err := exec.Command("gcc", "-o", t.dest, "-c", t.source).CombinedOutput()
 	fmt.Println(string(stdout), err)
+	return nil
 }
 
 type taskLinkProgram struct{}
@@ -32,12 +33,13 @@ func (t *taskLinkProgram) Matches(other nbt.Task) bool {
 	return ok
 }
 
-func (t *taskLinkProgram) Perform(h nbt.Handler) {
+func (t *taskLinkProgram) Perform(h nbt.Handler) error {
 	h.Require(&taskCompileC{"hello.c", "hello.o"})
 	h.Require(&taskCompileC{"main.c", "main.o"})
 	h.Wait()
 	stdout, err := exec.Command("gcc", "-o", "hello.out", "hello.o", "main.o").CombinedOutput()
 	fmt.Println(string(stdout), err)
+	return nil
 }
 
 func main() {

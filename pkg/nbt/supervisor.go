@@ -32,10 +32,10 @@ func superviseTask[T Task](task T, handler *chanHandler[T], comms supervisorComm
 		case message, isOpen := <-handler.messages:
 			if !isOpen {
 				comms.SendMessage(task, statusUpdate{newStatus: statusComplete})
+				return
 			} else {
 				comms.SendMessage(task, message)
 			}
-			return
 		}
 	}
 }

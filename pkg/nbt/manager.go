@@ -143,6 +143,9 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 			only one item will ever get placed on the callback channel, and it is a buffered channel. */
 			request.Callback() <- manager.resolve(request.ToResolve())
 		}
+		for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
+			manager.run(manager.taskQueue.Dequeue(), &comms)
+		}
 	}
 
 	// TODO handle deadlock, which should be indicated if manager.numExecuting <= 0 && manager.numWaiting > 0

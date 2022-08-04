@@ -8,16 +8,6 @@ func Start(mainTask Task, maxParallelTasks uint) {
 	newTaskManager().execute(mainTask, maxParallelTasks)
 }
 
-type dependencyDeclaration[T Task] struct {
-	dependent    T
-	dependencies []Task
-}
-
-type resolveRequest struct {
-	callback  chan<- Task
-	toResolve Task
-}
-
 type taskEntry struct {
 	Task
 	/* Slice of tasks that are dependent and still waiting on this task. */

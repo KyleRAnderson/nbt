@@ -16,26 +16,24 @@ type taskManager struct {
 	taskQueue                queue.Queue[*taskEntry]
 }
 
-type managerComms struct {
-	doneQueue chan *taskEntry
-	/* Queue of requests for tasks to wait. */
-	waitQueue chan *taskEntry
-	/* Queue of dependency declarations. */
-	dependencyQueue chan dependencyDeclaration[*taskEntry]
-	resolutionQueue chan resolveRequest
+/* Interface to be implemented in order for the handler to be able to communicate
+properly with the manager. */
+type handlerCommunicator[T Task] interface {
+	SendMessage(T, handlerMessenger)
+	RequestResolution(resolveRequester)
 }
 
-func (c *managerComms) MarkDone(task *taskEntry) {
-	c.doneQueue <- task
+type managerComms struct {
+	messages        chan messenger[*taskEntry]
+	resolutionQueue chan resolveRequester
 }
-func (c *managerComms) MarkWaiting(task *taskEntry) {
-	c.waitQueue <- task
+
+func (c *managerComms) SendMessage(task *taskEntry, message handlerMessenger) {
+	c.messages <- addSubject(task, message)
 }
-func (c *managerComms) RequestResolution(r resolveRequest) {
+
+func (c *managerComms) RequestResolution(r resolveRequester) {
 	c.resolutionQueue <- r
-}
-func (c *managerComms) DeclareDependency(decl dependencyDeclaration[*taskEntry]) {
-	c.dependencyQueue <- decl
 }
 
 func (tm *taskManager) processCompleteTask(task *taskEntry) {
@@ -112,7 +110,7 @@ func (tm *taskManager) run(task *taskEntry, comms *managerComms) {
 	case statusNew:
 		task.handler = newChanHandler[*taskEntry]()
 		go func() {
-			defer close(task.handler.waitRequests)
+			defer close(task.handler.messages)
 			task.Perform(task.handler)
 		}()
 	case statusWaiting:
@@ -125,25 +123,17 @@ func (tm *taskManager) run(task *taskEntry, comms *managerComms) {
 	tm.numExecuting++
 }
 
-func monitorTask[T Task](task T, handler *chanHandler[T], comms interface {
-	DeclareDependency(dependencyDeclaration[T])
-	RequestResolution(resolveRequest)
-	MarkDone(T)
-	MarkWaiting(T)
-}) {
+func monitorTask[T Task](task T, handler *chanHandler[T], comms handlerCommunicator[T]) {
 	/* Use a type parameter to prevent this function from using members of *taskEntry. */
 	for {
 		select {
-		case requirement := <-handler.requireQueue:
-			comms.DeclareDependency(dependencyDeclaration[T]{task, []Task{requirement}})
 		case request := <-handler.resolveQueue:
 			comms.RequestResolution(request)
-		case _, isOpen := <-handler.waitRequests:
+		case message, isOpen := <-handler.messages:
 			if !isOpen {
-				/* This channel being closed is a signal that the task is complete. */
-				comms.MarkDone(task)
+				comms.SendMessage(task, statusUpdate{newStatus: statusComplete})
 			} else {
-				comms.MarkWaiting(task)
+				comms.SendMessage(task, message)
 			}
 			return
 		}
@@ -160,35 +150,57 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 	}
 	/* No need to close these channels since it wouldn't signal anything anyway. */
 	comms := managerComms{
-		doneQueue: make(chan *taskEntry, maxParallelTasks),
-		/* Queue of requests for tasks to wait. */
-		waitQueue: make(chan *taskEntry, maxParallelTasks),
-		/* Queue of dependency declarations. */
-		dependencyQueue: make(chan dependencyDeclaration[*taskEntry], dependencyQueueSize(maxParallelTasks)),
-		resolutionQueue: make(chan resolveRequest, maxParallelTasks),
+		messages:        make(chan messenger[*taskEntry], dependencyQueueSize(maxParallelTasks)),
+		resolutionQueue: make(chan resolveRequester, maxParallelTasks),
 	}
 
 	manager.run(manager.resolve(mainTask), &comms)
 
 	for manager.numExecuting > 0 {
 		select {
-		case doneTask := <-comms.doneQueue:
-			manager.numExecuting--
-			manager.processCompleteTask(doneTask)
-		case waitingTask := <-comms.waitQueue:
-			manager.numWaiting++
-			manager.numExecuting--
-			manager.processWaitingTask(waitingTask)
-		case requirement := <-comms.dependencyQueue:
-			manager.processRequirement(requirement.dependent, requirement.dependencies)
+		case message := <-comms.messages:
+			if status := message.RequestedStatus(); status != nil {
+				switch *status {
+				case statusComplete:
+					manager.numExecuting--
+					manager.processCompleteTask(message.Subject())
+				case statusWaiting:
+					manager.numWaiting++
+					manager.numExecuting--
+					manager.processWaitingTask(message.Subject())
+				default:
+					// Do nothing
+				}
+			}
+			if dependencies := message.Dependencies(); dependencies != nil {
+				manager.processRequirement(message.Subject(), dependencies)
+			}
 		case request := <-comms.resolutionQueue:
 			/* This will not block with the implementation of chanMessageCallbacks that we have, since
 			only one item will ever get placed on the callback channel, and it is a buffered channel. */
-			request.callback <- manager.resolve(request.toResolve)
-		}
-
-		for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
-			manager.run(manager.taskQueue.Dequeue(), &comms)
+			request.Callback() <- manager.resolve(request.ToResolve())
 		}
 	}
+
+	// for manager.numExecuting > 0 {
+	// 	select {
+	// 	case doneTask := <-comms.doneQueue:
+	// 		manager.numExecuting--
+	// 		manager.processCompleteTask(doneTask)
+	// 	case waitingTask := <-comms.waitQueue:
+	// 		manager.numWaiting++
+	// 		manager.numExecuting--
+	// 		manager.processWaitingTask(waitingTask)
+	// 	case requirement := <-comms.dependencyQueue:
+	// 		manager.processRequirement(requirement.dependent, requirement.dependencies)
+	// 	case request := <-comms.resolutionQueue:
+	// 		/* This will not block with the implementation of chanMessageCallbacks that we have, since
+	// 		only one item will ever get placed on the callback channel, and it is a buffered channel. */
+	// 		request.callback <- manager.resolve(request.toResolve)
+	// 	}
+
+	// 	for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
+	// 		manager.run(manager.taskQueue.Dequeue(), &comms)
+	// 	}
+	// }
 }

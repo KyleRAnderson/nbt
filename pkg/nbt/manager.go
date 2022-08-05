@@ -131,6 +131,8 @@ func (tm *taskManager) run(task *taskEntry, comms *supervisorComms) {
 		}()
 	case statusWaiting:
 		tm.numBlocked--
+		/* Unblock the worker. */
+		task.handler.waiter <- struct{}{}
 	default:
 		panic(&errUnexpectedStatus{task})
 	}

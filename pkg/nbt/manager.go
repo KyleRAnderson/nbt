@@ -13,7 +13,7 @@ func newTaskManager() *taskManager {
 
 type taskManager struct {
 	registry                 map[uintptr][]*taskEntry
-	numWaiting, numExecuting uint
+	numBlocked, numExecuting uint
 	taskQueue                queue.Queue[*taskEntry]
 }
 
@@ -21,7 +21,12 @@ func (tm *taskManager) processCompleteTask(task *taskEntry) {
 	task.status = statusComplete
 	for _, dependent := range task.dependents {
 		dependent.dependencies.Remove(task)
-		tm.processWaitingTask(dependent)
+		switch dependent.status {
+		case statusWaiting, statusNew:
+			if dependent.IsReady() {
+				tm.enqueue(dependent)
+			}
+		}
 	}
 }
 
@@ -30,7 +35,7 @@ func (tm *taskManager) processErroredTask(task *taskEntry) {
 	for _, dependent := range task.dependents {
 		switch dependent.status {
 		case statusWaiting:
-			tm.numWaiting--
+			tm.numBlocked--
 			fallthrough
 		case statusNew:
 			dependent.status = statusErrored
@@ -55,6 +60,8 @@ func (tm *taskManager) processWaitingTask(task *taskEntry) {
 	task.fireCallbacks(&task.onWaitingHooks)
 	if task.IsReady() {
 		tm.enqueue(task)
+	} else {
+		tm.numBlocked++
 	}
 }
 
@@ -73,6 +80,8 @@ func (tm *taskManager) processRequirement(dependent *taskEntry, dependencies []T
 		if resolvedDependency.IsReady() && resolvedDependency.status == statusNew {
 			/* Need to check that the task status is new to prevent adding multiple queue entries for the same task. */
 			tm.enqueue(resolvedDependency)
+		} else {
+			tm.numBlocked++
 		}
 	}
 }
@@ -121,7 +130,7 @@ func (tm *taskManager) run(task *taskEntry, comms *supervisorComms) {
 			}
 		}()
 	case statusWaiting:
-		tm.numWaiting--
+		tm.numBlocked--
 	default:
 		panic(&errUnexpectedStatus{task})
 	}
@@ -155,10 +164,10 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 					manager.numExecuting--
 					manager.processCompleteTask(message.Subject())
 				case statusWaiting:
-					manager.numWaiting++
 					manager.numExecuting--
 					manager.processWaitingTask(message.Subject())
 				case statusErrored:
+					manager.numExecuting--
 					log.Printf("task %#v errored: %v\n", message.Subject(), message.Error())
 					manager.processErroredTask(message.Subject())
 				default:
@@ -178,5 +187,5 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 		}
 	}
 
-	// TODO handle deadlock, which should be indicated if manager.numExecuting <= 0 && manager.numWaiting > 0
+	// TODO handle deadlock, which should be indicated if manager.numExecuting <= 0 && manager.numBlocked > 0 && no tasks are in the task queue
 }

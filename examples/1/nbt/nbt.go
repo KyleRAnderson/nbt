@@ -22,7 +22,7 @@ func (t *taskCompileC) Matches(other nbt.Task) bool {
 func (t *taskCompileC) Perform(h nbt.Handler) error {
 	stdout, err := exec.Command("gcc", "-o", t.dest, "-c", t.source).CombinedOutput()
 	fmt.Println(string(stdout), err)
-	return nil
+	return err
 }
 
 type taskLinkProgram struct{}
@@ -39,7 +39,7 @@ func (t *taskLinkProgram) Perform(h nbt.Handler) error {
 	h.Wait()
 	stdout, err := exec.Command("gcc", "-o", "hello.out", "hello.o", "main.o").CombinedOutput()
 	fmt.Println(string(stdout), err)
-	return nil
+	return err
 }
 
 func main() {

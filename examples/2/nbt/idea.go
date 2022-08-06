@@ -1,4 +1,4 @@
-package idea
+package main
 
 import "gitlab.com/kyle_anderson/nbt/pkg/nbt"
 

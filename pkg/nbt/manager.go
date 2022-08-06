@@ -2,54 +2,67 @@ package nbt
 
 import (
 	"fmt"
+	"log"
 
 	"gitlab.com/kyle_anderson/go-utils/pkg/queue"
 )
 
 func newTaskManager() *taskManager {
-	return &taskManager{make(map[uintptr][]*taskEntry), 0, 0, queue.NewLinkedListQueue[*taskEntry]()}
+	return &taskManager{make(map[uint64][]*taskEntry), 0, 0, queue.NewLinkedListQueue[*taskEntry]()}
 }
 
 type taskManager struct {
-	registry                 map[uintptr][]*taskEntry
-	numWaiting, numExecuting uint
+	/* TODO make the registry into a separate struct of its own that takes care of task resolution. */
+	registry                 map[uint64][]*taskEntry
+	numBlocked, numExecuting uint
 	taskQueue                queue.Queue[*taskEntry]
-}
-
-type managerComms struct {
-	doneQueue chan *taskEntry
-	/* Queue of requests for tasks to wait. */
-	waitQueue chan *taskEntry
-	/* Queue of dependency declarations. */
-	dependencyQueue chan dependencyDeclaration[*taskEntry]
-	resolutionQueue chan resolveRequest
-}
-
-func (c *managerComms) MarkDone(task *taskEntry) {
-	c.doneQueue <- task
-}
-func (c *managerComms) MarkWaiting(task *taskEntry) {
-	c.waitQueue <- task
-}
-func (c *managerComms) RequestResolution(r resolveRequest) {
-	c.resolutionQueue <- r
-}
-func (c *managerComms) DeclareDependency(decl dependencyDeclaration[*taskEntry]) {
-	c.dependencyQueue <- decl
 }
 
 func (tm *taskManager) processCompleteTask(task *taskEntry) {
 	task.status = statusComplete
 	for _, dependent := range task.dependents {
 		dependent.dependencies.Remove(task)
-		tm.processWaitingTask(dependent)
+		switch dependent.status {
+		case statusWaiting, statusNew:
+			if dependent.IsReady() {
+				tm.enqueue(dependent)
+			}
+		}
+	}
+}
+
+func (tm *taskManager) processErroredTask(task *taskEntry) {
+	task.status = statusErrored
+	for _, dependent := range task.dependents {
+		switch dependent.status {
+		case statusWaiting:
+			tm.numBlocked--
+			fallthrough
+		case statusNew:
+			dependent.status = statusErrored
+		case statusComplete, statusErrored:
+			// Do nothing
+		case statusRunning:
+			task.onWaiting(func(t *taskEntry) {
+				if t.status != statusWaiting {
+					panic(fmt.Sprint(`unexpected task status upon entering onWaiting: `, t.status))
+				}
+				tm.processErroredTask(t)
+			})
+		default:
+			/* Ideally handling all cases would be checked at compile time, but Go lacks this ability. */
+			panic(fmt.Sprint("(*taskManager).processErroredTask: unhandled state: ", dependent.status))
+		}
 	}
 }
 
 func (tm *taskManager) processWaitingTask(task *taskEntry) {
 	task.status = statusWaiting
+	task.fireCallbacks(&task.onWaitingHooks)
 	if task.IsReady() {
 		tm.enqueue(task)
+	} else {
+		tm.numBlocked++
 	}
 }
 
@@ -68,6 +81,8 @@ func (tm *taskManager) processRequirement(dependent *taskEntry, dependencies []T
 		if resolvedDependency.IsReady() && resolvedDependency.status == statusNew {
 			/* Need to check that the task status is new to prevent adding multiple queue entries for the same task. */
 			tm.enqueue(resolvedDependency)
+		} else {
+			tm.numBlocked++
 		}
 	}
 }
@@ -98,56 +113,33 @@ func (tm *taskManager) resolve(task Task) (currentInstance *taskEntry) {
 	return
 }
 
-type errUnexpectedStatus struct {
-	task *taskEntry
-}
-
-func (err *errUnexpectedStatus) Error() string {
-	return fmt.Sprintf(`unexpected state %q for task`, err.task.status.String())
-}
-
 /* Runs the given task. */
-func (tm *taskManager) run(task *taskEntry, comms *managerComms) {
+func (tm *taskManager) run(task *taskEntry, comms *supervisorComms) {
 	switch task.status {
 	case statusNew:
 		task.handler = newChanHandler[*taskEntry]()
 		go func() {
-			defer close(task.handler.waitRequests)
-			task.Perform(task.handler)
+			// TODO might be nice for the supervisor to handle this business logic.
+			defer func() {
+				close(task.handler.messages)
+				if err := recover(); err != nil {
+					task.handler.messages <- &errorMessage{err: &errPanicked{panicErr: err, task: task}}
+				}
+			}()
+			if err := task.Perform(task.handler); err != nil {
+				task.handler.messages <- &errorMessage{err: err}
+			}
 		}()
 	case statusWaiting:
-		tm.numWaiting--
+		tm.numBlocked--
+		/* Unblock the worker. */
+		task.handler.waiter <- struct{}{}
 	default:
 		panic(&errUnexpectedStatus{task})
 	}
 	task.status = statusRunning
-	go monitorTask[*taskEntry](task, task.handler, comms)
+	go superviseTask[*taskEntry](task, task.handler, comms)
 	tm.numExecuting++
-}
-
-func monitorTask[T Task](task T, handler *chanHandler[T], comms interface {
-	DeclareDependency(dependencyDeclaration[T])
-	RequestResolution(resolveRequest)
-	MarkDone(T)
-	MarkWaiting(T)
-}) {
-	/* Use a type parameter to prevent this function from using members of *taskEntry. */
-	for {
-		select {
-		case requirement := <-handler.requireQueue:
-			comms.DeclareDependency(dependencyDeclaration[T]{task, []Task{requirement}})
-		case request := <-handler.resolveQueue:
-			comms.RequestResolution(request)
-		case _, isOpen := <-handler.waitRequests:
-			if !isOpen {
-				/* This channel being closed is a signal that the task is complete. */
-				comms.MarkDone(task)
-			} else {
-				comms.MarkWaiting(task)
-			}
-			return
-		}
-	}
 }
 
 func dependencyQueueSize(maxParallelTasks uint) uint {
@@ -159,36 +151,44 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 		panic("numJobs must be positive!")
 	}
 	/* No need to close these channels since it wouldn't signal anything anyway. */
-	comms := managerComms{
-		doneQueue: make(chan *taskEntry, maxParallelTasks),
-		/* Queue of requests for tasks to wait. */
-		waitQueue: make(chan *taskEntry, maxParallelTasks),
-		/* Queue of dependency declarations. */
-		dependencyQueue: make(chan dependencyDeclaration[*taskEntry], dependencyQueueSize(maxParallelTasks)),
-		resolutionQueue: make(chan resolveRequest, maxParallelTasks),
+	comms := supervisorComms{
+		messages:        make(chan messenger[*taskEntry], dependencyQueueSize(maxParallelTasks)),
+		resolutionQueue: make(chan resolveRequester, maxParallelTasks),
 	}
 
 	manager.run(manager.resolve(mainTask), &comms)
 
 	for manager.numExecuting > 0 {
 		select {
-		case doneTask := <-comms.doneQueue:
-			manager.numExecuting--
-			manager.processCompleteTask(doneTask)
-		case waitingTask := <-comms.waitQueue:
-			manager.numWaiting++
-			manager.numExecuting--
-			manager.processWaitingTask(waitingTask)
-		case requirement := <-comms.dependencyQueue:
-			manager.processRequirement(requirement.dependent, requirement.dependencies)
+		case message := <-comms.messages:
+			if status := message.RequestedStatus(); status != nil {
+				switch *status {
+				case statusComplete:
+					manager.numExecuting--
+					manager.processCompleteTask(message.Subject())
+				case statusWaiting:
+					manager.numExecuting--
+					manager.processWaitingTask(message.Subject())
+				case statusErrored:
+					manager.numExecuting--
+					log.Printf("task %#v errored: %v\n", message.Subject(), message.Error())
+					manager.processErroredTask(message.Subject())
+				default:
+					// Do nothing
+				}
+			}
+			if dependencies := message.Dependencies(); dependencies != nil {
+				manager.processRequirement(message.Subject(), dependencies)
+			}
 		case request := <-comms.resolutionQueue:
 			/* This will not block with the implementation of chanMessageCallbacks that we have, since
 			only one item will ever get placed on the callback channel, and it is a buffered channel. */
-			request.callback <- manager.resolve(request.toResolve)
+			request.Callback() <- manager.resolve(request.ToResolve())
 		}
-
 		for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
 			manager.run(manager.taskQueue.Dequeue(), &comms)
 		}
 	}
+
+	// TODO handle deadlock, which should be indicated if manager.numExecuting <= 0 && manager.numBlocked > 0 && no tasks are in the task queue
 }

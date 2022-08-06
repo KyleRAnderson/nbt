@@ -3,5 +3,5 @@
 #include <stdio.h>
 
 void PrintHello() {
-    printf("hello");
+    printf("hello\n");
 }

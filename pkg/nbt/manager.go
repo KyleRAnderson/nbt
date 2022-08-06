@@ -8,11 +8,12 @@ import (
 )
 
 func newTaskManager() *taskManager {
-	return &taskManager{make(map[uintptr][]*taskEntry), 0, 0, queue.NewLinkedListQueue[*taskEntry]()}
+	return &taskManager{make(map[uint64][]*taskEntry), 0, 0, queue.NewLinkedListQueue[*taskEntry]()}
 }
 
 type taskManager struct {
-	registry                 map[uintptr][]*taskEntry
+	/* TODO make the registry into a separate struct of its own that takes care of task resolution. */
+	registry                 map[uint64][]*taskEntry
 	numBlocked, numExecuting uint
 	taskQueue                queue.Queue[*taskEntry]
 }

@@ -12,8 +12,8 @@ func TaskCompileC(h nbt.Handler, source, dest string) error {
 }
 
 func TaskLinkProgram(h nbt.Handler) error {
-	h.Require(TaskCompileC{"hello.c", "hello.o"})
-	h.Require(TaskCompileC{"main.c", "main.o"})
+	h.Require(NewTaskCompileC("hello.c", "hello.o"))
+	h.Require(NewTaskCompileC("main.c", "main.o"))
 	h.Wait()
 	/* Link program. */
 	return nil

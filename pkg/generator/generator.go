@@ -11,14 +11,16 @@ import (
 	"go/token"
 	"io"
 	"io/fs"
+	"os"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 	"text/template"
 )
 
 /*
-	The type used for the task type identifier for generated tasks.
-
+The type used for the task type identifier for generated tasks.
 This is used when hashing the task.
 */
 type GenTaskId = uint32
@@ -110,13 +112,51 @@ func parseDir(dir string) (pkgs map[string]*ast.Package, first error) {
 	return parser.ParseDir(token.NewFileSet(), dir, func(fi fs.FileInfo) bool { return !isGeneratedFile(fi.Name()) }, 0)
 }
 
-func gatherImportInfo(pkg *ast.Package) {
+func min[N int | int32 | int64 | uint | uint32 | uint64](a, b N) N {
+	if a < b {
+		return a
+	}
+	return b
 }
 
-func Generate(inputDirectory string, output io.Writer) error {
+func processFiles(pkg *ast.Package) error {
+	tempDir, err := os.MkdirTemp("", "nbt")
+	if err != nil {
+		return fmt.Errorf(`generator.processFiles: failed to set up temporary working directory: %w`, err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	numJobs := min(runtime.NumCPU()+2, len(pkg.Files))
+	wg := &sync.WaitGroup{}
+	defer wg.Wait()
+	wg.Add(numJobs)
+	jobs := make(chan *fileProcessingJob, numJobs)
+	defer close(jobs)
+	for i := 0; i < numJobs; i++ {
+		go func() {
+			processor(jobs)
+			wg.Done()
+		}()
+	}
+	for _, file := range pkg.Files {
+		supplier := func() (outputter, error) {
+			/* Each input file is mapped to one output file in order to avoid import conflict issues. */
+			out, err := newFileOutputter(file.Name.Name, tempDir)
+			if err != nil {
+				return nil, fmt.Errorf(`generator.processFiles: failed to set up file outputter: %w`, err)
+			}
+			return out, nil
+		}
+		/* The processor shall be responsible for closing the outputter. */
+		jobs <- &fileProcessingJob{file, supplier}
+	}
+	return nil
+}
+
+func Generate(inputDirectory string) error {
 	const mainPackageName = "main"
 	/*
-	   - Parse files
+	   - Parse each file, and fore each one:
 	   - Gather import information
 	   - See if user has renamed the nbt package. If so, use their name for it to avoid possible conflicts.
 	   - Perform generation, noting which imports are required. Write output to a temporary file.
@@ -132,6 +172,6 @@ func Generate(inputDirectory string, output io.Writer) error {
 	if !ok {
 		return ErrNoMainPackage()
 	}
-	fmt.Printf("mainPkg: %v\n", mainPkg)
+	processFiles(mainPkg)
 	return nil
 }

@@ -11,12 +11,13 @@ import (
 	"go/token"
 	"io"
 	"io/fs"
-	"os"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"text/template"
+
+	"gitlab.com/kyle_anderson/go-utils/pkg/uerrors"
 )
 
 /*
@@ -120,37 +121,32 @@ func min[N int | int32 | int64 | uint | uint32 | uint64](a, b N) N {
 }
 
 func processFiles(pkg *ast.Package) error {
-	tempDir, err := os.MkdirTemp("", "nbt")
-	if err != nil {
-		return fmt.Errorf(`generator.processFiles: failed to set up temporary working directory: %w`, err)
-	}
-	defer os.RemoveAll(tempDir)
-
 	numJobs := min(runtime.NumCPU()+2, len(pkg.Files))
 	wg := &sync.WaitGroup{}
 	defer wg.Wait()
 	wg.Add(numJobs)
-	jobs := make(chan *fileProcessingJob, numJobs)
+	jobs := make(chan fileProcessingJob, numJobs)
 	defer close(jobs)
+	errs := make(chan *ErrFileProcessing, cap(jobs)) // No need to close, wouldn't signal anything
 	for i := 0; i < numJobs; i++ {
 		go func() {
-			processor(jobs)
+			processor(jobs, errs)
 			wg.Done()
 		}()
 	}
-	for _, file := range pkg.Files {
-		supplier := func() (outputter, error) {
-			/* Each input file is mapped to one output file in order to avoid import conflict issues. */
-			out, err := newFileOutputter(file.Name.Name, tempDir)
-			if err != nil {
-				return nil, fmt.Errorf(`generator.processFiles: failed to set up file outputter: %w`, err)
+	collectedErrs := uerrors.LinkedAggregate{}
+	for filename, file := range pkg.Files {
+		for sent := false; !sent; {
+			select {
+			case jobs <- fileProcessingJob{file, filename}:
+				sent = true
+			case err := <-errs:
+				collectedErrs.Add(err)
 			}
-			return out, nil
 		}
-		/* The processor shall be responsible for closing the outputter. */
-		jobs <- &fileProcessingJob{file, supplier}
 	}
-	return nil
+	// TODO if done sending but more errors come up, this is bad!!!
+	return collectedErrs.Materialize()
 }
 
 func Generate(inputDirectory string) error {
@@ -172,6 +168,5 @@ func Generate(inputDirectory string) error {
 	if !ok {
 		return ErrNoMainPackage()
 	}
-	processFiles(mainPkg)
-	return nil
+	return processFiles(mainPkg)
 }

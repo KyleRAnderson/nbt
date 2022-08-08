@@ -105,7 +105,7 @@ func processFile(job fileProcessingJob) *ErrFileProcessing {
 		}
 	}
 	if rewritten, err := imports.Process(output.Name(), nil, nil); err != nil {
-		return formErr(fmt.Errorf(`generator.processFile: failed to autoformat`))
+		return formErr(fmt.Errorf(`generator.processFile: failed to autoformat: %w`, err))
 	} else {
 		if _, err := output.Seek(0, io.SeekStart); err != nil {
 			return formErr(fmt.Errorf(`generator.processFile: failed to seek to beginning prior to rewrite: %w`, err))

@@ -1,6 +1,8 @@
 package main
 
-import "gitlab.com/kyle_anderson/nbt/pkg/nbt"
+import (
+	"gitlab.com/kyle_anderson/nbt/pkg/nbt"
+)
 
 /* Idea: We could generate task type declarations from functions like the following.
 The generated code would be placed in the same package as these functions so that

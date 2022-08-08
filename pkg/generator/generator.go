@@ -18,13 +18,8 @@ import (
 	"text/template"
 
 	"gitlab.com/kyle_anderson/go-utils/pkg/uerrors"
+	"gitlab.com/kyle_anderson/go-utils/pkg/umath"
 )
-
-/*
-The type used for the task type identifier for generated tasks.
-This is used when hashing the task.
-*/
-type GenTaskId = uint32
 
 type taskFunc struct {
 	Name   string
@@ -81,7 +76,8 @@ func (t *{{.StructName}}) Perform(h nbt.Handler) {{"{"}}
 		{{ end }}
 		{{ end }}
 	)
-{{"}"}}`)
+{{"}"}}
+`)
 	if err != nil {
 		return fmt.Errorf(errPrefix+`template parsing error: %w`, err)
 	}
@@ -93,13 +89,7 @@ func (t *{{.StructName}}) Perform(h nbt.Handler) {{"{"}}
 
 const generatedFileExt = "gen"
 
-var generatedFileRegex = func() *regexp.Regexp {
-	if r, err := regexp.Compile(`\.` + generatedFileExt + `\.`); err != nil {
-		panic(fmt.Errorf(`generator.generatedFileRegex: failed to compile: %w`, err))
-	} else {
-		return r
-	}
-}()
+var generatedFileRegex = regexp.MustCompile(`\.` + generatedFileExt + `\.`)
 
 /*
 Determines if the given file is a generated Go source file.
@@ -113,20 +103,16 @@ func parseDir(dir string) (pkgs map[string]*ast.Package, first error) {
 	return parser.ParseDir(token.NewFileSet(), dir, func(fi fs.FileInfo) bool { return !isGeneratedFile(fi.Name()) }, 0)
 }
 
-func min[N int | int32 | int64 | uint | uint32 | uint64](a, b N) N {
-	if a < b {
-		return a
-	}
-	return b
-}
-
+/*
+Generates the task code for all files in the given package.
+An aggregate error, implementing [gitlab.com/kyle_anderson/go-utils/pkg/uerrors.Aggregate]
+may be returned if multiple errors were encountered.
+*/
 func processFiles(pkg *ast.Package) error {
-	numJobs := min(runtime.NumCPU()+2, len(pkg.Files))
+	numJobs := umath.Min(runtime.NumCPU()+2, len(pkg.Files))
 	wg := &sync.WaitGroup{}
-	defer wg.Wait()
 	wg.Add(numJobs)
 	jobs := make(chan fileProcessingJob, numJobs)
-	defer close(jobs)
 	errs := make(chan *ErrFileProcessing, cap(jobs)) // No need to close, wouldn't signal anything
 	for i := 0; i < numJobs; i++ {
 		go func() {
@@ -134,19 +120,15 @@ func processFiles(pkg *ast.Package) error {
 			wg.Done()
 		}()
 	}
-	collectedErrs := uerrors.LinkedAggregate{}
+	collectedErrs := uerrors.CollectChan(errs)
 	for filename, file := range pkg.Files {
-		for sent := false; !sent; {
-			select {
-			case jobs <- fileProcessingJob{file, filename}:
-				sent = true
-			case err := <-errs:
-				collectedErrs.Add(err)
-			}
-		}
+		jobs <- fileProcessingJob{file, filename}
 	}
-	// TODO if done sending but more errors come up, this is bad!!!
-	return collectedErrs.Materialize()
+	close(jobs)
+	wg.Wait()
+	/* errs can safely be closed here as all writers should now have terminated. */
+	close(errs)
+	return (<-collectedErrs).Materialize()
 }
 
 func Generate(inputDirectory string) error {

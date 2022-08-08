@@ -43,10 +43,12 @@ func nameMatchesTask(decl *ast.FuncDecl) bool {
 	return funcDeclMatcher.MatchString(decl.Name.Name)
 }
 func extractFunctionInformation(fn *ast.FuncDecl) (info *taskFunc) {
-	info = &taskFunc{Name: fn.Name.Name, Params: make([]taskParam, len(fn.Type.Params.List))}
+	info = &taskFunc{Name: fn.Name.Name}
 	if len(fn.Type.Params.List) > 1 {
+		inParams := fn.Type.Params.List[1:]
+		info.Params = make([]taskParam, len(inParams))
 		/* Skip the first parameter, since that's just the handler. */
-		for j, inParam := range fn.Type.Params.List[1:] {
+		for j, inParam := range inParams {
 			outParam := &info.Params[j] // reference for convenience
 			outParam.Names = make([]string, len(inParam.Names))
 			for i, name := range inParam.Names {
@@ -69,9 +71,9 @@ func extractFunctionInformation(fn *ast.FuncDecl) (info *taskFunc) {
 func writeHeader(out io.Writer, imports []*ast.ImportSpec) error {
 	t := template.Must(template.New(`header`).Parse(`package main
 import (
-	{{ range . }}
+	{{- range . }}
 	{{ if .Name }} {{ .Name.Name }} {{ end }} {{ .Path.Value }}
-	{{ end }}
+	{{- end }}
 )
 `))
 	if err := t.Execute(out, imports); err != nil {

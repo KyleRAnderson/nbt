@@ -11,15 +11,12 @@ type TaskCompileCS struct {
 func (t *TaskCompileCS) Perform(h nbt.Handler) {
 	TaskCompileC(
 		h,
-
 		t.source,
-
 		t.dest,
 	)
 }
 
-type TaskLinkProgramS struct {
-}
+type TaskLinkProgramS struct{}
 
 func (t *TaskLinkProgramS) Perform(h nbt.Handler) {
 	TaskLinkProgram(

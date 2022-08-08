@@ -44,37 +44,23 @@ func (tp taskParam) JoinedNames() string {
 }
 
 func GenerateTaskType(out io.Writer, task *taskFunc) error {
-	// TODO consider: instead of generating a type for each task function, create a general task type
-	// and in the constructor for the task, fill it in.
-	/* General task type:
-	type generalTask[Args any] struct {
-		identifier uint32 // Identifier for the type of the task
-		args Args
-	}
-
-	Advantages:
-	  - Avoids exposing underlying task type to user, who may construct the task raw without the `New<taskname>` constructor
-	Disadvantages:
-	  - User cannot cast to task type, since none exists. Perhaps though we could accomplish whatever the user wants to achieve from that in other ways,
-	    such as with a generated cast function that checks the identifier and returns the values of the arguments provided to the task, which is probably what the user wants.
-	*/
 	/* TODO: would be a good idea to use the same package name for "nbt" as the code being read
 	in case the user renames the package import because of a conflict. */
 	const errPrefix = `generator.GenerateTaskType: `
 	t, err := template.New(`generator`).Parse(`type {{.StructName}} struct {{"{"}}
-	{{ range .Params  }}
+{{- range .Params  }}
 	{{ .JoinedNames }} {{ .Type }}
-{{ end }}
+{{ end -}}
 {{"}"}}
 
 func (t *{{.StructName}}) Perform(h nbt.Handler) {{"{"}}
 	{{.Name}}(
 		h,
-		{{ range .Params }}
-		{{ range .Names }}
+{{- range .Params -}}
+{{- range .Names }}
 		t.{{ . }},
-		{{ end }}
-		{{ end }}
+{{- end -}}
+{{- end }}
 	)
 {{"}"}}
 `)

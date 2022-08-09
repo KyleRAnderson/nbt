@@ -20,9 +20,7 @@ type taskCompileC struct {
 
 func (t *taskCompileC) Hash() uint64 {
 	h := fnv.New64()
-	if err := binary.Write(h, binary.LittleEndian, hashBaseCompileC); err != nil {
-		panic(fmt.Errorf(`(*taskCompileC).Hash: error writing hash: %w`, err))
-	}
+	binary.Write(h, binary.LittleEndian, hashBaseCompileC)
 	h.Write([]byte(t.source))
 	h.Write([]byte(t.dest))
 	return h.Sum64()

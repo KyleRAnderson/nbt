@@ -67,8 +67,9 @@ func (tp taskParam) JoinedNames() string {
 }
 
 func GenerateTaskType(out io.Writer, task *taskFunc) error {
-	/* TODO: would be a good idea to use the same package name for "nbt" as the code being read
-	in case the user renames the package import because of a conflict. */
+	/* Note: We assume that the nbt package will be available as "nbt" and has not been renamed.
+	Although it would be possible to detect if the user has renamed the package, this would complicate the logic,
+	and for now we'd prefer to keep things simple. */
 	const errPrefix = `generator.GenerateTaskType: `
 	t, err := template.New(`generator`).Parse(`type {{.StructName}} struct {{"{"}}
 {{- range .Params  }}

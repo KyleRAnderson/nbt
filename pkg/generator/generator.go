@@ -49,11 +49,11 @@ func (tp *taskParam) HashCall(handlerSymbol, selfSymbol string) string {
 	switch tp.Type {
 	case "string":
 		for _, name := range tp.Names {
-			builder.WriteString(fmt.Sprintf("%s.Write([]byte(%s.%s))\n", handlerSymbol, selfSymbol, name))
+			builder.WriteString(fmt.Sprintf("\n\t%s.Write([]byte(%s.%s))", handlerSymbol, selfSymbol, name))
 		}
 	case "int", "int32", "int64", "uint", "uint32", "uint64":
 		for _, name := range tp.Names {
-			builder.WriteString(fmt.Sprintf("binary.Write(%s, binary.LittleEndian, %s.%s)\n", handlerSymbol, selfSymbol, name))
+			builder.WriteString(fmt.Sprintf("\n\tbinary.Write(%s, binary.LittleEndian, %s.%s)", handlerSymbol, selfSymbol, name))
 		}
 	default:
 		panic(fmt.Sprint("unsupporded type for hash call generation: ", tp.Type))
@@ -109,9 +109,9 @@ func (t *{{.StructName}}) Matches(other nbt.Task) bool {{"{"}}
 func (t *{{.StructName}}) Hash() uint64 {
 	h := fnv.New64()
 	binary.Write(h, binary.LittleEndian, {{.HashBaseConstName}})
-{{ range .Params -}}
-	{{ .HashCall "h" "t" }}
-{{- end -}}
+{{- range .Params -}}
+{{ .HashCall "h" "t" }}
+{{- end }}
 	return h.Sum64()
 }
 `)

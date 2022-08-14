@@ -113,4 +113,69 @@ func TestNamedTaskRequirer(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run(`with an argument set`, func(t *testing.T) {
+		/*
+			taskNames: Names of tasks to be used. Should not have duplicates.
+			expectedArgs: Map from the name of a task to a multiset of expected arguments. It is a multiset in case some arguments are repeated (i.e. if the task is named multiple times with the same argument).
+			invocation: The invocation being made, the named tasks with their arguments.
+		*/
+		runTest := func(t *testing.T, taskNames []string, expectedArgs map[string]map[string]uint, invocation []string) {
+			registeredTasks := make(map[string]TaskSupplier, len(taskNames))
+			for i, taskName := range taskNames {
+				taskName := taskName // Capture
+				registeredTasks[taskName] = func(actualArg string) (nbt.Task, error) {
+					if expectedArgSet, ok := expectedArgs[taskName]; !ok {
+						t.Fatalf(`no expected argument set for task with name %q`, taskName)
+					} else if expectedArgSet[actualArg] == 0 {
+						t.Errorf(`received unexpected invocation of task %q with argument %q`, taskName, actualArg)
+					} else {
+						expectedArgSet[actualArg]--
+					}
+					return mockTask(i), nil
+				}
+			}
+			if _, err := New(registeredTasks, invocation); err != nil {
+				t.Error("received unexpected error from New:", err)
+			}
+			for taskName, expectedArgSet := range expectedArgs {
+				for expectedArg, count := range expectedArgSet {
+					if count > 0 {
+						t.Errorf(`missing invocations of task %q with arg %q, count is %d`, taskName, expectedArg, count)
+					}
+				}
+			}
+		}
+
+		for testNo, test := range []struct {
+			taskNames    []string
+			expectedArgs map[string]map[string]uint
+			invocation   []string
+		}{
+			{
+				[]string{"one", "two", "three"},
+				map[string]map[string]uint{
+					"one":   {"0": 1},
+					"two":   {"and a quarter": 1},
+					"three": {"3": 1},
+				},
+				[]string{"one(0)", "two(and a quarter)", "three(3)"},
+			},
+			{
+				[]string{"one", "two", "three"},
+				map[string]map[string]uint{
+					"one":   {"": 1},
+					"two":   {"two": 1},
+					"three": {"3": 2, "t": 1, "one": 1},
+				},
+				[]string{"three(one)", "one", "two(two)", "three(t)", "three(3)", "three(3)"},
+			},
+		} {
+			test := test // Capture
+			t.Run(fmt.Sprint(testNo), func(t *testing.T) {
+				t.Parallel()
+				runTest(t, test.taskNames, test.expectedArgs, test.invocation)
+			})
+		}
+	})
 }

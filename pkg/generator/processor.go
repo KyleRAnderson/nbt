@@ -122,11 +122,15 @@ func processFile(fnGath funcGatherer, job fileProcessingJob) *ErrFileProcessing 
 		return formErr(fmt.Errorf(`generator.processFile: failed to write header: %w`, err))
 	}
 	for _, decl := range file.Decls {
-		if funcDecl, ok := decl.(*ast.FuncDecl); ok && nameMatchesTask(funcDecl) {
-			funcInfo := extractFunctionInformation(funcDecl)
-			fnGath.AddFunc(funcInfo)
-			if err := GenerateTaskType(w, funcInfo); err != nil {
-				return formErr(fmt.Errorf(`generator.processFile: failed to generate task type: %w`, err))
+		if funcDecl, ok := decl.(*ast.FuncDecl); ok {
+			if nameMatchesTask(funcDecl) {
+				funcInfo := extractFunctionInformation(funcDecl)
+				fnGath.AddFunc(funcInfo)
+				if err := GenerateTaskType(w, funcInfo); err != nil {
+					return formErr(fmt.Errorf(`generator.processFile: failed to generate task type: %w`, err))
+				}
+			} else if funcDecl.Name.Name == mainFunctionName {
+				fnGath.AddFunc(extractFunctionInformation(funcDecl))
 			}
 		}
 	}

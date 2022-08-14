@@ -8,6 +8,8 @@ import (
 	"text/template"
 )
 
+const mainFunctionName = "main"
+
 /*
 Determines if the given task meets the preconditions for being a task that can be named
 on the command line.
@@ -61,11 +63,10 @@ import (
 	go func() {
 		defer close(filteredTasks)
 		for fn := range funcInfos {
-			if meetsNamedTaskPrecondition(fn) {
-				filteredTasks <- fn
-			}
-			if fn.Name == "main" {
+			if fn.Name == mainFunctionName {
 				seenMain = true
+			} else if meetsNamedTaskPrecondition(fn) {
+				filteredTasks <- fn
 			}
 		}
 	}()

@@ -17,7 +17,6 @@ import (
 	"sync"
 	"text/template"
 
-	"gitlab.com/kyle_anderson/go-utils/pkg/heap"
 	"gitlab.com/kyle_anderson/go-utils/pkg/uerrors"
 	"gitlab.com/kyle_anderson/go-utils/pkg/umath"
 )
@@ -30,11 +29,6 @@ type taskFunc struct {
 /* Retrieves the expected name for the task struct corresponding to this task function. */
 func (tf *taskFunc) StructName() string {
 	return tf.Name + "S"
-}
-
-func (tf *taskFunc) HashBaseConstName() string {
-	const hashBaseConstPrefix = "hashBase"
-	return hashBaseConstPrefix + tf.Name
 }
 
 type taskParam struct {
@@ -109,7 +103,7 @@ func (t *{{.StructName}}) Matches(other nbt.Task) bool {{"{"}}
 
 func (t *{{.StructName}}) Hash() uint64 {
 	h := fnv.New64()
-	binary.Write(h, binary.LittleEndian, {{.HashBaseConstName}})
+	h.Write([]byte({{ .StructName | printf "%q" }}))
 {{- range .Params -}}
 {{ .HashCall "h" "t" }}
 {{- end }}
@@ -146,20 +140,23 @@ Generates the task code for all files in the given package.
 An aggregate error, implementing [gitlab.com/kyle_anderson/go-utils/pkg/uerrors.Aggregate]
 may be returned if multiple errors were encountered.
 */
-func processFiles(pkg *ast.Package) (requiredConstants []string, err error) {
+func processFiles(pkg *ast.Package) (err error) {
 	numJobs := umath.Min(runtime.NumCPU()+2, len(pkg.Files))
 	wg := &sync.WaitGroup{}
 	wg.Add(numJobs)
 	jobs := make(chan fileProcessingJob, numJobs)
 	errs := make(chan *ErrFileProcessing, cap(jobs)) // No need to close, wouldn't signal anything
-	requiredConstantsSrc := make(chan string, cap(jobs))
-	constHeapSupplier := collectConstants(requiredConstantsSrc)
+	funcInfosSource := make(chan *taskFunc, cap(jobs))
 	for i := 0; i < numJobs; i++ {
 		go func() {
-			processor(jobs, errs, requiredConstantsSrc)
+			processor(jobs, errs, funcInfosSource)
 			wg.Done()
 		}()
 	}
+	go func() { // TODO remove
+		for _ = range funcInfosSource {
+		}
+	}()
 	collectedErrs := uerrors.CollectChan(errs)
 	for filename, file := range pkg.Files {
 		jobs <- fileProcessingJob{file, filename}
@@ -168,27 +165,8 @@ func processFiles(pkg *ast.Package) (requiredConstants []string, err error) {
 	wg.Wait()
 	/* errs can safely be closed here as all writers should now have terminated. */
 	close(errs)
-	close(requiredConstantsSrc)
-	return (<-constHeapSupplier).ToSortedSlice(), (<-collectedErrs).Materialize()
-}
-
-/*
-Collects the constant names from the given channel into a heap, useful to obtain
-the constants in lexical sorting order once all have been sent.
-*/
-func collectConstants(source <-chan string) <-chan *heap.Heap[string] {
-	result := make(chan *heap.Heap[string])
-	h := heap.New(strings.Compare)
-	go func() {
-		defer func() {
-			result <- h
-			close(result)
-		}()
-		for constname := range source {
-			h.Push(constname)
-		}
-	}()
-	return result
+	close(funcInfosSource)
+	return (<-collectedErrs).Materialize()
 }
 
 func Generate(inputDirectory string) error {
@@ -210,11 +188,10 @@ func Generate(inputDirectory string) error {
 	if !ok {
 		return ErrNoMainPackage()
 	}
-	requiredConstants, err := processFiles(mainPkg)
-	if err != nil {
+	if err = processFiles(mainPkg); err != nil {
 		return fmt.Errorf(`generator.Generate: failed to process files: %w`, err)
 	}
-	if err := createHelperFile(inputDirectory, requiredConstants); err != nil {
+	if err := createHelperFile(inputDirectory); err != nil {
 		return fmt.Errorf(`generator.Generate: failed to create helper file: %w`, err)
 	}
 	return nil

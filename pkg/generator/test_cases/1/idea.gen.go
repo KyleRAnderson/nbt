@@ -3,7 +3,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"hash/fnv"
 
 	"gitlab.com/kyle_anderson/nbt/pkg/nbt"
@@ -38,7 +37,7 @@ func (t *TaskCompileCS) Matches(other nbt.Task) bool {
 
 func (t *TaskCompileCS) Hash() uint64 {
 	h := fnv.New64()
-	binary.Write(h, binary.LittleEndian, hashBaseTaskCompileC)
+	h.Write([]byte("TaskCompileCS"))
 	h.Write([]byte(t.source))
 	h.Write([]byte(t.dest))
 	return h.Sum64()
@@ -65,6 +64,6 @@ func (t *TaskLinkProgramS) Matches(other nbt.Task) bool {
 
 func (t *TaskLinkProgramS) Hash() uint64 {
 	h := fnv.New64()
-	binary.Write(h, binary.LittleEndian, hashBaseTaskLinkProgram)
+	h.Write([]byte("TaskLinkProgramS"))
 	return h.Sum64()
 }

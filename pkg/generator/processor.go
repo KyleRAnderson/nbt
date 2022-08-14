@@ -30,8 +30,8 @@ Any errors encountered in the process will be sent on the errs channel.
 This channel will not be closed by the processor so that it can be used
 by multiple processors running in parallel.
 */
-func processor(jobs <-chan fileProcessingJob, errs chan<- *ErrFileProcessing, requiredConsts chan<- string) {
-	ccg := chanConstGatherer{requiredConsts}
+func processor(jobs <-chan fileProcessingJob, errs chan<- *ErrFileProcessing, taskFuncs chan<- *taskFunc) {
+	ccg := chanFuncGatherer{taskFuncs}
 	for job := range jobs {
 		if err := processFile(&ccg, job); err != nil {
 			errs <- err
@@ -92,20 +92,20 @@ import (
 	return nil
 }
 
-type chanConstGatherer struct {
-	out chan<- string
+type chanFuncGatherer struct {
+	out chan<- *taskFunc
 }
 
-func (ccg *chanConstGatherer) AddConstant(name string) {
-	ccg.out <- name
+func (ccg *chanFuncGatherer) AddFunc(fn *taskFunc) {
+	ccg.out <- fn
 }
 
 /* Gathers the list of constants required for the tasks in a file. */
-type constGatherer interface {
-	AddConstant(name string)
+type funcGatherer interface {
+	AddFunc(fn *taskFunc)
 }
 
-func processFile(consts constGatherer, job fileProcessingJob) *ErrFileProcessing {
+func processFile(fnGath funcGatherer, job fileProcessingJob) *ErrFileProcessing {
 	file := job.file
 	var output *os.File
 	var err error
@@ -124,7 +124,7 @@ func processFile(consts constGatherer, job fileProcessingJob) *ErrFileProcessing
 	for _, decl := range file.Decls {
 		if funcDecl, ok := decl.(*ast.FuncDecl); ok && nameMatchesTask(funcDecl) {
 			funcInfo := extractFunctionInformation(funcDecl)
-			consts.AddConstant(funcInfo.HashBaseConstName())
+			fnGath.AddFunc(funcInfo)
 			if err := GenerateTaskType(w, funcInfo); err != nil {
 				return formErr(fmt.Errorf(`generator.processFile: failed to generate task type: %w`, err))
 			}

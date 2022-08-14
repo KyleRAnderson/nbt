@@ -38,6 +38,8 @@ func createHelperFile(dir string, funcInfos <-chan *taskFunc) error {
 Generates the helper file given the names of the necessary constants.
 The names should be in a deterministic order such that repetitive calls to the
 generator always yield the same output.
+
+A main function will be generated, unless `funcInfos` contains a function called `main` already.
 */
 func generateHelper(writer *bufio.Writer, funcInfos <-chan *taskFunc) error {
 	if err := writeGeneratedHeader(writer); err != nil {
@@ -47,16 +49,23 @@ func generateHelper(writer *bufio.Writer, funcInfos <-chan *taskFunc) error {
 import (
 	"gitlab.com/kyle_anderson/nbt/pkg/nbt"
 	"gitlab.com/kyle_anderson/nbt/pkg/ntr"
+	"gitlab.com/kyle_anderson/nbt/pkg/ntr/main"
 )
 `); err != nil {
 		return fmt.Errorf(`generator.generateHelper: failed to write top line: %w`, err)
 	}
 	filteredTasks := make(chan *taskFunc, 2)
+	/* True if a function named `main` has been seen already, false otherwise.
+	This varaible is only written to by the following goroutine. */
+	seenMain := false
 	go func() {
 		defer close(filteredTasks)
 		for fn := range funcInfos {
 			if meetsNamedTaskPrecondition(fn) {
 				filteredTasks <- fn
+			}
+			if fn.Name == "main" {
+				seenMain = true
 			}
 		}
 	}()
@@ -73,9 +82,19 @@ import (
 	}
 {{- end }}
 	return result
-}`))
+}
+`))
 	if err := t.Execute(writer, filteredTasks); err != nil {
 		return fmt.Errorf(`generator.generateHelper: failed to execute getNamedTasks template: %w`, err)
+	}
+	/* After template execution, `filteredTasks` has been closed so `seenMain` has its final value. */
+	if !seenMain {
+		if _, err := writer.WriteString(`func main() {
+	ntrmain.Run(getNamedTasks(), os.Args[1:])
+}
+`); err != nil {
+			return fmt.Errorf(`generator.generateHelper: failed to generate main function: %w`, err)
+		}
 	}
 	return nil
 }

@@ -3,8 +3,11 @@
 package main
 
 import (
+	"os"
+
 	"gitlab.com/kyle_anderson/nbt/pkg/nbt"
 	"gitlab.com/kyle_anderson/nbt/pkg/ntr"
+	ntrmain "gitlab.com/kyle_anderson/nbt/pkg/ntr/main"
 )
 
 func getNamedTasks() map[string]ntr.TaskSupplier {
@@ -14,4 +17,7 @@ func getNamedTasks() map[string]ntr.TaskSupplier {
 		return
 	}
 	return result
+}
+func main() {
+	ntrmain.Run(getNamedTasks(), os.Args[1:])
 }

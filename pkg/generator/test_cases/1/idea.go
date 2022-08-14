@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os/exec"
+
 	"gitlab.com/kyle_anderson/nbt/pkg/nbt"
 )
 
@@ -10,7 +13,9 @@ even the linters would work, after generation is done. */
 
 func TaskCompileC(h nbt.Handler, source, dest string) error {
 	/* Compile C file */
-	return nil
+	stdout, err := exec.Command("gcc", "-o", dest, "-c", source).CombinedOutput()
+	fmt.Println(string(stdout), err)
+	return err
 }
 
 func TaskLinkProgram(h nbt.Handler) error {
@@ -18,5 +23,7 @@ func TaskLinkProgram(h nbt.Handler) error {
 	h.Require(NewTaskCompileC("main.c", "main.o"))
 	h.Wait()
 	/* Link program. */
-	return nil
+	stdout, err := exec.Command("gcc", "-o", "hello.out", "hello.o", "main.o").CombinedOutput()
+	fmt.Println(string(stdout), err)
+	return err
 }

@@ -44,8 +44,9 @@ type commandLineArgs struct {
 func parseArgs(args []string) (parsed commandLineArgs, err error) {
 	/* Marks the end of all flags. */
 	const flagEndDelimiter = "--"
+	parsed.numJobs = 1
 	i := uint(0)
-	for isFlag(args[i]) {
+	for i < uint(len(args)) && isFlag(args[i]) {
 		switch args[i] {
 		case "-j", "--jobs":
 			i++
@@ -61,7 +62,7 @@ func parseArgs(args []string) (parsed commandLineArgs, err error) {
 			return
 		}
 	}
-	if args[i] == flagEndDelimiter {
+	if i < uint(len(args)) && args[i] == flagEndDelimiter {
 		i++
 	}
 	parsed.namedTasks = args[i:]

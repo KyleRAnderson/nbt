@@ -17,5 +17,6 @@ type Handler interface {
 }
 
 func Start(mainTask Task, maxParallelTasks uint) {
+	// TODO this needs to return errors.
 	newTaskManager().execute(mainTask, maxParallelTasks)
 }

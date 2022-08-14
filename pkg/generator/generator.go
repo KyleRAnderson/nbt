@@ -17,7 +17,6 @@ import (
 	"sync"
 	"text/template"
 
-	"gitlab.com/kyle_anderson/go-utils/pkg/uerrors"
 	"gitlab.com/kyle_anderson/go-utils/pkg/umath"
 )
 
@@ -29,6 +28,16 @@ type taskFunc struct {
 /* Retrieves the expected name for the task struct corresponding to this task function. */
 func (tf *taskFunc) StructName() string {
 	return tf.Name + "S"
+}
+
+/* Gets the name of the task without the leading "Task". */
+func (tf *taskFunc) NameWithoutTask() string {
+	return funcDeclMatcher.ReplaceAllString(tf.Name, "")
+}
+
+/* Returns the name of the constructor for the task's struct .*/
+func (tf *taskFunc) ConstructorName() string {
+	return fmt.Sprint("New", tf.Name)
 }
 
 type taskParam struct {
@@ -45,9 +54,9 @@ func (tp *taskParam) HashCall(handlerSymbol, selfSymbol string) string {
 		for _, name := range tp.Names {
 			builder.WriteString(fmt.Sprintf("\n\t%s.Write([]byte(%s.%s))", handlerSymbol, selfSymbol, name))
 		}
-	case "int", "int32", "int64", "uint", "uint32", "uint64":
+	case "int", "int32", "int64", "uint", "uint32", "uint64", "float32", "float64":
 		for _, name := range tp.Names {
-			builder.WriteString(fmt.Sprintf("\n\tbinary.Write(%s, binary.LittleEndian, %s.%s)", handlerSymbol, selfSymbol, name))
+			builder.WriteString(fmt.Sprintf("\n\tnbt.HashWriteNum(%s, %s.%s)", handlerSymbol, selfSymbol, name))
 		}
 	default:
 		panic(fmt.Sprint("unsupporded type for hash call generation: ", tp.Type))
@@ -71,7 +80,7 @@ func GenerateTaskType(out io.Writer, task *taskFunc) error {
 {{ end -}}
 {{"}"}}
 
-func New{{ .Name }}(
+func {{ .ConstructorName }}(
 {{- range $i, $p := .Params }}
 	{{ .JoinedNames }} {{ .Type }},
 {{- end }}
@@ -140,33 +149,33 @@ Generates the task code for all files in the given package.
 An aggregate error, implementing [gitlab.com/kyle_anderson/go-utils/pkg/uerrors.Aggregate]
 may be returned if multiple errors were encountered.
 */
-func processFiles(pkg *ast.Package) (err error) {
+func processFiles(pkg *ast.Package) (<-chan *taskFunc, <-chan *ErrFileProcessing) {
 	numJobs := umath.Min(runtime.NumCPU()+2, len(pkg.Files))
-	wg := &sync.WaitGroup{}
-	wg.Add(numJobs)
-	jobs := make(chan fileProcessingJob, numJobs)
-	errs := make(chan *ErrFileProcessing, cap(jobs)) // No need to close, wouldn't signal anything
-	funcInfosSource := make(chan *taskFunc, cap(jobs))
-	for i := 0; i < numJobs; i++ {
-		go func() {
-			processor(jobs, errs, funcInfosSource)
-			wg.Done()
+	taskFuncs := make(chan *taskFunc, numJobs)
+	errs := make(chan *ErrFileProcessing, numJobs)
+
+	go func() {
+		wg := &sync.WaitGroup{}
+		defer func() {
+			wg.Wait()
+			/* these channels can safely be closed here as all writers should now have terminated. */
+			close(taskFuncs)
+			close(errs)
 		}()
-	}
-	go func() { // TODO remove
-		for _ = range funcInfosSource {
+		wg.Add(numJobs)
+		jobs := make(chan fileProcessingJob, numJobs)
+		for i := 0; i < numJobs; i++ {
+			go func() {
+				processor(jobs, errs, taskFuncs)
+				wg.Done()
+			}()
 		}
+		for filename, file := range pkg.Files {
+			jobs <- fileProcessingJob{file, filename}
+		}
+		close(jobs)
 	}()
-	collectedErrs := uerrors.CollectChan(errs)
-	for filename, file := range pkg.Files {
-		jobs <- fileProcessingJob{file, filename}
-	}
-	close(jobs)
-	wg.Wait()
-	/* errs can safely be closed here as all writers should now have terminated. */
-	close(errs)
-	close(funcInfosSource)
-	return (<-collectedErrs).Materialize()
+	return taskFuncs, errs
 }
 
 func Generate(inputDirectory string) error {
@@ -188,11 +197,25 @@ func Generate(inputDirectory string) error {
 	if !ok {
 		return ErrNoMainPackage()
 	}
-	if err = processFiles(mainPkg); err != nil {
-		return fmt.Errorf(`generator.Generate: failed to process files: %w`, err)
-	}
-	if err := createHelperFile(inputDirectory); err != nil {
-		return fmt.Errorf(`generator.Generate: failed to create helper file: %w`, err)
-	}
+	funcInfos, fileErrs := processFiles(mainPkg)
+	allErrs := make(chan error, cap(fileErrs)+1)
+	wg := &sync.WaitGroup{}
+	defer func() {
+		wg.Wait()
+		close(allErrs)
+	}()
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for err := range fileErrs {
+			allErrs <- fmt.Errorf(`generator.Generate: file processing error: %w`, err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := createHelperFile(inputDirectory, funcInfos); err != nil {
+			allErrs <- fmt.Errorf(`generator.Generate: failed to create helper file: %w`, err)
+		}
+	}()
 	return nil
 }

@@ -19,3 +19,14 @@ type errPanicked struct {
 func (err *errPanicked) Error() string {
 	return fmt.Sprintf("task %#v panicked: %v", err.task, err.panicErr)
 }
+
+/* Error type used when a task returns an error and the manager propagates this information. */
+type ErrTaskErrored struct {
+	Task Task
+	Err  error
+}
+
+func (e *ErrTaskErrored) Error() string {
+	return fmt.Sprintf("task %#v errored: %v", e.Task, e.Err)
+}
+func (e *ErrTaskErrored) Unwrap() error { return e.Err }

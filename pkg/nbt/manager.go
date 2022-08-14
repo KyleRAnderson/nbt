@@ -2,7 +2,6 @@ package nbt
 
 import (
 	"fmt"
-	"log"
 
 	"gitlab.com/kyle_anderson/go-utils/pkg/queue"
 )
@@ -146,7 +145,7 @@ func dependencyQueueSize(maxParallelTasks uint) uint {
 	return 4 * maxParallelTasks
 }
 
-func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
+func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) <-chan error {
 	if maxParallelTasks <= 0 {
 		panic("numJobs must be positive!")
 	}
@@ -155,40 +154,45 @@ func (manager *taskManager) execute(mainTask Task, maxParallelTasks uint) {
 		messages:        make(chan messenger[*taskEntry], dependencyQueueSize(maxParallelTasks)),
 		resolutionQueue: make(chan resolveRequester, maxParallelTasks),
 	}
+	errs := make(chan error, maxParallelTasks)
+	go func() {
+		defer close(errs)
+		manager.run(manager.resolve(mainTask), &comms)
 
-	manager.run(manager.resolve(mainTask), &comms)
-
-	for manager.numExecuting > 0 {
-		select {
-		case message := <-comms.messages:
-			if status := message.RequestedStatus(); status != nil {
-				switch *status {
-				case statusComplete:
-					manager.numExecuting--
-					manager.processCompleteTask(message.Subject())
-				case statusWaiting:
-					manager.numExecuting--
-					manager.processWaitingTask(message.Subject())
-				case statusErrored:
-					manager.numExecuting--
-					log.Printf("task %#v errored: %v\n", message.Subject(), message.Error())
-					manager.processErroredTask(message.Subject())
-				default:
-					// Do nothing
+		for manager.numExecuting > 0 {
+			select {
+			case message := <-comms.messages:
+				if status := message.RequestedStatus(); status != nil {
+					switch *status {
+					case statusComplete:
+						manager.numExecuting--
+						manager.processCompleteTask(message.Subject())
+					case statusWaiting:
+						manager.numExecuting--
+						manager.processWaitingTask(message.Subject())
+					case statusErrored:
+						manager.numExecuting--
+						/* The caller must consume errors in order for this not to hang. */
+						errs <- &ErrTaskErrored{message.Subject(), message.Error()}
+						manager.processErroredTask(message.Subject())
+					default:
+						// Do nothing
+					}
 				}
+				if dependencies := message.Dependencies(); dependencies != nil {
+					manager.processRequirement(message.Subject(), dependencies)
+				}
+			case request := <-comms.resolutionQueue:
+				/* This will not block with the implementation of chanMessageCallbacks that we have, since
+				only one item will ever get placed on the callback channel, and it is a buffered channel. */
+				request.Callback() <- manager.resolve(request.ToResolve())
 			}
-			if dependencies := message.Dependencies(); dependencies != nil {
-				manager.processRequirement(message.Subject(), dependencies)
+			for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
+				manager.run(manager.taskQueue.Dequeue(), &comms)
 			}
-		case request := <-comms.resolutionQueue:
-			/* This will not block with the implementation of chanMessageCallbacks that we have, since
-			only one item will ever get placed on the callback channel, and it is a buffered channel. */
-			request.Callback() <- manager.resolve(request.ToResolve())
 		}
-		for manager.numExecuting < maxParallelTasks && !manager.taskQueue.IsEmpty() {
-			manager.run(manager.taskQueue.Dequeue(), &comms)
-		}
-	}
+	}()
 
 	// TODO handle deadlock, which should be indicated if manager.numExecuting <= 0 && manager.numBlocked > 0 && no tasks are in the task queue
+	return errs
 }

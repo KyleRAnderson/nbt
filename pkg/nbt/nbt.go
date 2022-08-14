@@ -16,7 +16,11 @@ type Handler interface {
 	Resolve(t Task) Task
 }
 
-func Start(mainTask Task, maxParallelTasks uint) {
-	// TODO this needs to return errors.
-	newTaskManager().execute(mainTask, maxParallelTasks)
+/*
+Starts executing the main task, processing all dependencies until completion.
+The caller must consume errors outputted in the returned channel, else the
+task processing will hang.
+*/
+func Start(mainTask Task, maxParallelTasks uint) <-chan error {
+	return newTaskManager().execute(mainTask, maxParallelTasks)
 }
